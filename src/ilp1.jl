@@ -1,0 +1,496 @@
+#using JuMP
+
+function model_mcm_forumlation!(model::Model, C::Vector{Int},
+                                wordlength::Int,
+                                NA::Int;
+                                use_all_adders::Bool=false,
+                                adder_depth_max::Int=0,
+                                minimize_adder_depth::Bool=true,
+                                wordlength_in::Int=0,
+                                no_one_bit_adders::Bool=false,
+                                input_error::Int=0,
+                                output_errors::Vector{Int},
+                                verbose::Bool=false,
+                                known_min_NA::Int=0,
+                                addergraph_warmstart::AdderGraph,
+                                use_big_m::Bool=true,
+    )::Model
+    if no_one_bit_adders
+        wordlength_in = 0
+    end
+    addernodes = Vector{AdderNode}()
+    output_values = Vector{Int}()
+    addernodes_value_to_index = Dict{Int, Int}()
+    nb_var_warmstart = 0
+    use_warmstart = false
+    if !isempty(addergraph_warmstart)
+        use_warmstart = true
+        addernodes = get_nodes(addergraph_warmstart)
+        for addernode in addernodes
+            sort!(addernode.inputs, by=x->x.shift, rev=true)
+        end
+        output_values = get_outputs(addergraph_warmstart)
+        addernodes_value_to_index = Dict{Int, Int}([get_value(addernodes[i]) => i for i in 1:length(addernodes)])
+        addernodes_value_to_index[1] = 0
+        nb_var_warmstart = min(NA, length(addernodes))
+    end
+    Smin, Smax = -wordlength, wordlength
+    NO = length(C)
+    known_min_NA = min(NA, max(get_min_number_of_adders(C), known_min_NA))
+    if use_all_adders
+        known_min_NA = NA
+    end
+    verbose && println("\tBounds on the number of adder: $(known_min_NA)--$(NA)")
+    maximum_target = maximum(C)
+    maximum_value = 2^wordlength
+
+    @variable(model, 1 <= ca[0:NA] <= maximum_value-1, Int)
+    @constraint(model, [a in 1:known_min_NA], ca[a] >= 3)
+    @variable(model, 1 <= ca_no_shift[1:NA] <= maximum_value*2, Int)
+    @variable(model, 1 <= cai[1:NA, 1:2] <= maximum_value-1, Int)
+    @variable(model, 1 <= cai_left_sh[1:NA] <= maximum_value*2, Int)
+    @variable(model, -2*maximum_value <= cai_left_shsg[1:NA] <= maximum_value*2, Int)
+    @variable(model, -2*maximum_value <= cai_right_sg[1:NA] <= maximum_value*2, Int)
+
+    @variable(model, Phiai[1:NA, 1:2], Bin)
+    @variable(model, caik[a in 1:NA, 1:2, 0:(a-1)], Bin)
+    @variable(model, phias[1:NA, 0:Smax], Bin)
+    @variable(model, oaj[1:NA, 1:NO], Bin)
+
+    model[:has_ada] = false
+    if minimize_adder_depth || adder_depth_max != 0
+        model[:has_ada] = true
+        # Add adder depth
+        @variable(model, 0 <= ada[0:NA] <= NA)
+        fix(ada[0], 0, force=true)
+        @variable(model, 1 <= max_ad <= NA, Int)
+        @constraint(model, [a in 1:NA, i in 1:2, k in 0:(a-1)], ada[a] >= ada[k]+1 - (1-caik[a,i,k])*NA)
+        @constraint(model, [a in 1:NA], max_ad >= ada[a])
+
+        if adder_depth_max != 0
+            @constraint(model, max_ad <= adder_depth_max)
+        end
+    end
+
+    @variable(model, 0 <= force_odd[1:NA] <= maximum_value, Int)
+    @variable(model, Psias[1:NA, Smin:0], Bin)
+
+    if use_warmstart
+        set_start_value(ca[0], 1)
+        current_adder_depth_max_value = 0
+        for a in 1:nb_var_warmstart
+            if get_value(addernodes[a]) > maximum_value
+                continue
+            end
+            left_input, right_input = addernodes_value_to_index[get_input_addernode_values(addernodes[a])[1]], addernodes_value_to_index[get_input_addernode_values(addernodes[a])[2]]
+            left_input_value = 1
+            if left_input != 0
+                left_input_value = get_value(addernodes[left_input])
+            end
+            right_input_value = 1
+            if right_input != 0
+                right_input_value = get_value(addernodes[right_input])
+            end
+            left_shift, right_shift = get_input_shifts(addernodes[a])
+            left_negative, right_negative = are_negative_inputs(addernodes[a])
+            set_start_value(ca[a], get_value(addernodes[a]))
+            set_start_value(ca_no_shift[a], get_value(addernodes[a])*(2^max(-right_shift, 0)))
+            set_start_value(force_odd[a], div(get_value(addernodes[a]), 2))
+            if left_input_value <= maximum_value-1 && right_input_value <= maximum_value-1
+                set_start_value(cai[a, 1], left_input_value)
+                set_start_value(cai[a, 2], right_input_value)
+                set_start_value(cai_left_sh[a], left_input_value*(2^max(0, left_shift)))
+                if left_negative
+                    set_start_value(cai_left_shsg[a], -left_input_value*(2^max(0, left_shift)))
+                else
+                    set_start_value(cai_left_shsg[a], left_input_value*(2^max(0, left_shift)))
+                end
+                if right_negative
+                    set_start_value(cai_right_sg[a], -right_input_value)
+                else
+                    set_start_value(cai_right_sg[a], right_input_value)
+                end
+                for k in 0:(a-1)
+                    set_start_value(caik[a, 1, k], 0)
+                    set_start_value(caik[a, 2, k], 0)
+                end
+                set_start_value(caik[a, 1, left_input], 1)
+                set_start_value(caik[a, 2, right_input], 1)
+                set_start_value(Phiai[a, 1], left_negative)
+                set_start_value(Phiai[a, 2], right_negative)
+                set_start_value.(Psias[a, :], 0)
+                set_start_value.(phias[a, :], 0)
+                if right_shift >= Smin && right_shift <= 0
+                    set_start_value(Psias[a, right_shift], 1)
+                end
+                if left_shift >= 0 && left_shift <= Smax
+                    set_start_value(phias[a, left_shift], 1)
+                elseif left_shift < 0
+                    set_start_value(phias[a, 0], 1)
+                end
+                if minimize_adder_depth || adder_depth_max != 0
+                    set_start_value(ada[a], get_depth(addernodes[a]))
+                    current_adder_depth_max_value = max(current_adder_depth_max_value, get_depth(addernodes[a]))
+                end
+            end
+            set_start_value.(oaj[a, :], 0)
+            if get_value(addernodes[a]) in C
+                set_start_value(oaj[a, findfirst(isequal(get_value(addernodes[a])), C)], 1)
+            end
+        end
+        if minimize_adder_depth || adder_depth_max != 0
+            set_start_value(max_ad, current_adder_depth_max_value)
+        end
+    end
+
+    # C1
+    fix(ca[0], 1, force=true)
+    # C2 - Modified
+    @constraint(model, [a in 1:NA], ca_no_shift[a] == cai_left_shsg[a] + cai_right_sg[a])
+    # C3a - C3b
+    @constraint(model, [a in 1:NA, i in 1:2, k in 0:(a-1)], cai[a,i] <= ca[k] + (1-caik[a,i,k])*maximum_value)
+    @constraint(model, [a in 1:NA, i in 1:2, k in 0:(a-1)], cai[a,i] >= ca[k] - (1-caik[a,i,k])*maximum_value)
+    @constraint(model, [a in 1:NA, i in 1:2], sum(caik[a,i,k] for k in 0:(a-1)) == 1)
+    # C4a - C4b - Modified
+    @constraint(model, [a in 1:NA, s in 0:Smax], cai_left_sh[a] <= 2^s*cai[a,1] + (1-phias[a,s])*2*maximum_value)
+    @constraint(model, [a in 1:NA, s in 0:Smax], cai_left_sh[a] >= 2^s*cai[a,1] - (1-phias[a,s])*(2*maximum_value*(2^s)))
+    @constraint(model, [a in 1:NA], sum(phias[a,s] for s in 0:Smax) == 1)
+    # C5a - C5b - C5c - Modified
+    @constraint(model, [a in 1:NA], cai_left_shsg[a] <= cai_left_sh[a] + Phiai[a,1]*2*maximum_value)
+    @constraint(model, [a in 1:NA], cai_left_shsg[a] >= cai_left_sh[a] - Phiai[a,1]*(4*maximum_value))
+    @constraint(model, [a in 1:NA], cai_left_shsg[a] <= -cai_left_sh[a] + (1-Phiai[a,1])*(4*maximum_value))
+    @constraint(model, [a in 1:NA], cai_left_shsg[a] >= -cai_left_sh[a] - (1-Phiai[a,1])*2*maximum_value)
+    @constraint(model, [a in 1:NA], cai_right_sg[a] <= cai[a,2] + Phiai[a,2]*maximum_value)
+    @constraint(model, [a in 1:NA], cai_right_sg[a] >= cai[a,2] - Phiai[a,2]*(2*maximum_value))
+    @constraint(model, [a in 1:NA], cai_right_sg[a] <= -cai[a,2] + (1-Phiai[a,2])*(2*maximum_value))
+    @constraint(model, [a in 1:NA], cai_right_sg[a] >= -cai[a,2] - (1-Phiai[a,2])*maximum_value)
+    @constraint(model, [a in 1:NA], Phiai[a,1] + Phiai[a,2] <= 1)
+    # C6a - C6b
+    @constraint(model, [a in 1:NA, j in 1:NO], ca[a] <= C[j] + (1-oaj[a,j])*maximum_value)
+    @constraint(model, [a in 1:NA, j in 1:NO], ca[a] >= C[j] - (1-oaj[a,j])*maximum_target)
+    @constraint(model, [j in 1:NO], sum(oaj[a,j] for a in 1:NA) == 1)
+
+    # Odd
+    @constraint(model, [a in 1:NA], ca[a] == 2*force_odd[a]+1)
+    @constraint(model, [a in 1:NA, s in Smin:0], ca_no_shift[a] >= 2^(-s)*ca[a] + (Psias[a,s] - 1)*(maximum_value*(2^(-s))))
+    @constraint(model, [a in 1:NA, s in Smin:0], ca_no_shift[a] <= 2^(-s)*ca[a] + (1 - Psias[a,s])*(maximum_value*(2^(-s))))
+    @constraint(model, [a in 1:NA], sum(Psias[a,s] for s in Smin:0) == 1)
+    @constraint(model, [a in 1:NA], phias[a,0] == sum(Psias[a,s] for s in Smin:-1))
+
+    if wordlength_in > 0
+        max_wordlength = round(Int, log2((2^wordlength - 1)*(2^wordlength_in - 1)), RoundUp)
+        truncate_max = max_wordlength # Mock value
+        max_output_error = maximum(output_errors) # Should be a parameter
+
+        @variable(model, 0 <= onebit_a_used[1:NA] <= max_wordlength, Int)
+        @variable(model, 0 <= onebit_a[1:NA] <= max_wordlength, Int)
+        @variable(model, 0 <= g_a[1:NA] <= max_wordlength-1, Int)
+        @variable(model, 0 <= wordlength_a[0:NA] <= max_wordlength, Int)
+        @variable(model, psi_a[1:NA], Bin)
+
+        @variable(model, 0 <= adder_input_pos_bitshift[1:NA] <= Smax, Int)
+        @constraint(model, [a in 1:NA], adder_input_pos_bitshift[a] == sum(s*phias[a,s] for s in 1:Smax))
+        @constraint(model, [a in 1:NA, s in 0:Smax], adder_input_pos_bitshift[a] >= s - (1-phias[a,s])*Smax)
+        @constraint(model, [a in 1:NA, s in 0:Smax], adder_input_pos_bitshift[a] <= s + (1-phias[a,s])*Smax)
+        @variable(model, Smin <= adder_neg_bitshift[1:NA] <= 0, Int)
+        @constraint(model, [a in 1:NA], adder_neg_bitshift[a] == sum(s*Psias[a,s] for s in Smin:-1))
+        @constraint(model, [a in 1:NA, s in Smin:0], adder_neg_bitshift[a] >= s + (1-Psias[a,s])*Smin)
+        @constraint(model, [a in 1:NA, s in Smin:0], adder_neg_bitshift[a] <= s - (1-Psias[a,s])*Smin)
+
+        @constraint(model, [a in 1:NA], onebit_a[a] == wordlength_a[a] - g_a[a] + psi_a[a] - 1 - adder_neg_bitshift[a])
+        @constraint(model, [a in 1:NA], g_a[a] <= wordlength_a[a])
+
+        @variable(model, fourthcase[1:NA], Bin)
+        @variable(model, whichcase[1:NA], Bin)
+        @constraint(model, [a in 1:NA], whichcase[a] >= Phiai[a,1]) # if Phiai[a,1] == 1 we want whichcase to be 1
+        @constraint(model, [a in 1:NA], whichcase[a] <= 1-Phiai[a,2]) # if Phiai[a,2] == 1 we want whichcase to be 0
+        @constraint(model, [a in 1:NA], fourthcase[a] == phias[a,0])
+
+        @constraint(model, [a in 1:NA], g_a[a] <= (1-fourthcase[a])*max_wordlength)
+
+        @variable(model, 0 <= wordlength_left[1:NA] <= max_wordlength, Int)
+        @variable(model, 0 <= wordlength_right[1:NA] <= max_wordlength, Int)
+        if max_output_error != 0
+            # Counting zeros in data
+            @variable(model, 0 <= adder_zeros[0:NA] <= max_wordlength, Int)
+            fix(adder_zeros[0], 0, force=true)
+            @variable(model, 0 <= left_zeros[1:NA] <= max_wordlength, Int)
+            @variable(model, 0 <= right_zeros[1:NA] <= max_wordlength, Int)
+            @variable(model, left_zeros_bit[1:NA, 0:max_wordlength], Bin)
+            @variable(model, right_zeros_bit[1:NA, 0:max_wordlength], Bin)
+            @constraint(model, [a in 1:NA], sum(left_zeros_bit[a, w] for w in 0:max_wordlength) == 1)
+            @constraint(model, [a in 1:NA], sum(right_zeros_bit[a, w] for w in 0:max_wordlength) == 1)
+            @constraint(model, [a in 1:NA], sum(w*left_zeros_bit[a, w] for w in 0:max_wordlength) == left_zeros[a])
+            @constraint(model, [a in 1:NA], sum(w*right_zeros_bit[a, w] for w in 0:max_wordlength) == right_zeros[a])
+
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], left_zeros[a] <= adder_zeros[k] + (1-caik[a,1,k])*maximum_value)
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], left_zeros[a] >= adder_zeros[k] - (1-caik[a,1,k])*maximum_value)
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], right_zeros[a] <= adder_zeros[k] + (1-caik[a,2,k])*maximum_value)
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], right_zeros[a] >= adder_zeros[k] - (1-caik[a,2,k])*maximum_value)
+
+            # Truncate part
+            @variable(model, 0 <= internal_neg_error[0:NA] <= max_output_error, Int)
+            @variable(model, 0 <= internal_pos_error[0:NA] <= max_output_error, Int)
+            @variable(model, internal_neg_error_noshifted[1:NA] >= 0, Int)
+            @variable(model, internal_neg_error_input_left_nonshifted[1:NA] >= 0, Int)
+            @variable(model, internal_neg_error_input_right_nonshifted[1:NA] >= 0, Int)
+            @variable(model, internal_neg_error_input_left[1:NA] >= 0, Int)
+            @variable(model, internal_neg_error_input_right[1:NA] >= 0, Int)
+            @variable(model, internal_neg_error_input_left_trunc[1:NA] >= 0, Int)
+            @variable(model, internal_neg_error_input_right_trunc[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_noshifted[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_input_left_nonshifted[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_input_right_nonshifted[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_input_left[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_input_right[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_input_left_trunc[1:NA] >= 0, Int)
+            @variable(model, internal_pos_error_input_right_trunc[1:NA] >= 0, Int)
+
+            @variable(model, truncateleft[1:NA] >= 0, Int)
+            @variable(model, truncateright[1:NA] >= 0, Int)
+            @variable(model, truncateleft_bit[1:NA, 0:truncate_max], Bin)
+            @variable(model, truncateright_bit[1:NA, 0:truncate_max], Bin)
+            @variable(model, truncate_shift[1:NA, 0:truncate_max, 0:Smax], Bin)
+            @constraint(model, [a in 1:NA], truncateleft[a] <= wordlength_a[a])
+            @constraint(model, [a in 1:NA], truncateright[a] <= wordlength_a[a])
+
+            @constraint(model, [a in 1:NA], sum(truncateleft_bit[a, w] for w in 0:truncate_max) == 1)
+            @constraint(model, [a in 1:NA], sum(truncateright_bit[a, w] for w in 0:truncate_max) == 1)
+
+            @constraint(model, [a in 1:NA], sum(w*truncateleft_bit[a, w] for w in 0:truncate_max) == truncateleft[a])
+            @constraint(model, [a in 1:NA], sum(w*truncateright_bit[a, w] for w in 0:truncate_max) == truncateright[a])
+
+            @constraint(model, internal_neg_error[0] == input_error)
+            @constraint(model, internal_pos_error[0] == input_error)
+
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], internal_neg_error_input_left_nonshifted[a] >= internal_neg_error[k] - (1-caik[a,1,k])*max_output_error)
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], internal_neg_error_input_right_nonshifted[a] >= internal_neg_error[k] - (1-caik[a,2,k])*max_output_error)
+            @constraint(model, [a in 1:NA, s in 0:Smax], internal_neg_error_input_left[a] >= 2.0^s*internal_neg_error_input_left_nonshifted[a]-(1-phias[a,s])*(max_output_error*(2.0^s)))
+            @constraint(model, [a in 1:NA], internal_neg_error_input_right[a] >= internal_neg_error_input_right_nonshifted[a])
+            @constraint(model, [a in 1:NA, s in Smin:0], 2^(-s)*internal_neg_error[a] >= internal_neg_error_noshifted[a] - (1-Psias[a,s])*(max_output_error*(2^(-s+Smax))))
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], internal_pos_error_input_left_nonshifted[a] >= internal_pos_error[k] - (1-caik[a,1,k])*max_output_error)
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], internal_pos_error_input_right_nonshifted[a] >= internal_pos_error[k] - (1-caik[a,2,k])*max_output_error)
+            @constraint(model, [a in 1:NA, s in 0:Smax], internal_pos_error_input_left[a] >= 2.0^s*internal_pos_error_input_left_nonshifted[a]-(1-phias[a,s])*(max_output_error*(2.0^s)))
+            @constraint(model, [a in 1:NA], internal_pos_error_input_right[a] >= internal_pos_error_input_right_nonshifted[a])
+            @constraint(model, [a in 1:NA, s in Smin:0], 2^(-s)*internal_pos_error[a] >= internal_pos_error_noshifted[a] - (1-Psias[a,s])*(max_output_error*(2^(-s+Smax))))
+
+            @constraint(model, [a in 1:NA, w in 0:truncate_max, s in 0:Smax], truncate_shift[a, w, s] >= truncateleft_bit[a, w]+phias[a, s]-1)
+            @constraint(model, [a in 1:NA], sum(truncate_shift[a, :, :]) == 1)
+            @constraint(model, [a in 1:NA], internal_neg_error_input_left_trunc[a] >= internal_neg_error_input_left[a])
+            @constraint(model, [a in 1:NA, w in 1:truncate_max, s in 0:Smax], internal_neg_error_input_left_trunc[a] >= internal_neg_error_input_left[a] + (2.0^(w+s))*truncateleft_bit[a, w] - (1-truncate_shift[a, w, s])*(2.0^(truncate_max+Smax)) - sum((2.0^(ws+s))*left_zeros_bit[a, ws] for ws in 0:max_wordlength))
+            @constraint(model, [a in 1:NA], internal_neg_error_input_right_trunc[a] >= internal_neg_error_input_right[a])
+            @constraint(model, [a in 1:NA], internal_neg_error_input_right_trunc[a] >= internal_neg_error_input_right[a] + sum((2.0^(w))*truncateright_bit[a, w] for w in 1:truncate_max) - sum((2.0^(w))*right_zeros_bit[a, w] for w in 0:max_wordlength))
+            # Phiai = 0 => pos # Phiai = 1 => neg
+            @constraint(model, [a in 1:NA], internal_neg_error_noshifted[a] >= internal_neg_error_input_left_trunc[a]+internal_neg_error_input_right_trunc[a] - (Phiai[a,1]+Phiai[a,2])*2*max_output_error)
+            @constraint(model, [a in 1:NA], internal_neg_error_noshifted[a] >= internal_neg_error_input_left_trunc[a]+internal_pos_error_input_right_trunc[a] - (Phiai[a,1])*max_output_error - (1-Phiai[a,2])*max_output_error)
+            @constraint(model, [a in 1:NA], internal_neg_error_noshifted[a] >= internal_pos_error_input_left_trunc[a]+internal_neg_error_input_right_trunc[a] - (1-Phiai[a,1])*max_output_error - (Phiai[a,2])*max_output_error)
+            # Truncatures do not increase the positive error
+            @constraint(model, [a in 1:NA], internal_pos_error_input_left_trunc[a] == internal_pos_error_input_left[a])
+            @constraint(model, [a in 1:NA], internal_pos_error_input_right_trunc[a] == internal_pos_error_input_right[a])
+            # Phiai = 0 => pos # Phiai = 1 => neg
+            @constraint(model, [a in 1:NA], internal_pos_error_noshifted[a] >= internal_pos_error_input_left_trunc[a]+internal_pos_error_input_right_trunc[a] - (Phiai[a,1]+Phiai[a,2])*2*max_output_error)
+            @constraint(model, [a in 1:NA], internal_pos_error_noshifted[a] >= internal_pos_error_input_left_trunc[a]+internal_neg_error_input_right_trunc[a] - (Phiai[a,1])*max_output_error - (1-Phiai[a,2])*max_output_error)
+            @constraint(model, [a in 1:NA], internal_pos_error_noshifted[a] >= internal_neg_error_input_left_trunc[a]+internal_pos_error_input_right_trunc[a] - (1-Phiai[a,1])*max_output_error - (Phiai[a,2])*max_output_error)
+
+            @constraint(model, [a in 1:NA, j in 1:NO], internal_neg_error[a] <= output_errors[j] + (1-oaj[a,j])*max_output_error)
+            @constraint(model, [a in 1:NA, j in 1:NO], internal_pos_error[a] <= output_errors[j] + (1-oaj[a,j])*max_output_error)
+
+            @variable(model, 0 <= truncate_left_or_zeros[1:NA] <= max_wordlength, Int)
+            @variable(model, truncate_left_or_zeros_switch[1:NA], Bin)
+            @variable(model, 0 <= truncate_right_or_zeros[1:NA] <= max_wordlength, Int)
+            @variable(model, truncate_right_or_zeros_switch[1:NA], Bin)
+            @constraint(model, [a in 1:NA], truncate_left_or_zeros[a] <= truncateleft[a] + truncate_left_or_zeros_switch[a]*max_wordlength)
+            @constraint(model, [a in 1:NA], truncate_left_or_zeros[a] <= left_zeros[a] + (1-truncate_left_or_zeros_switch[a])*max_wordlength)
+            @constraint(model, [a in 1:NA], truncate_right_or_zeros[a] <= truncateright[a] + truncate_right_or_zeros_switch[a]*max_wordlength)
+            @constraint(model, [a in 1:NA], truncate_right_or_zeros[a] <= right_zeros[a] + (1-truncate_right_or_zeros_switch[a])*max_wordlength)
+
+            @constraint(model, [a in 1:NA], g_a[a] <= (truncate_left_or_zeros[a]+adder_input_pos_bitshift[a])+(1-whichcase[a])*max_wordlength)
+            @constraint(model, [a in 1:NA], g_a[a] <= truncate_right_or_zeros[a]+whichcase[a]*max_wordlength)
+
+            @constraint(model, [a in 1:NA], adder_zeros[a] <= truncateleft[a] + adder_input_pos_bitshift[a])
+            @constraint(model, [a in 1:NA], adder_zeros[a] <= truncateright[a])
+
+            @constraint(model, [a in 1:NA], truncateleft[a] <= wordlength_left[a])
+            @constraint(model, [a in 1:NA], truncateright[a] <= wordlength_right[a])
+
+            @variable(model, truncaterightorleft[1:NA], Bin)
+            @constraint(model, [a in 1:NA], truncateleft[a] <= max_wordlength*truncaterightorleft[a])
+            @constraint(model, [a in 1:NA], truncateright[a] <= max_wordlength*(1-truncaterightorleft[a]))
+        else
+            @constraint(model, [a in 1:NA], g_a[a] <= adder_input_pos_bitshift[a]+(1-whichcase[a])*max_wordlength)
+            @constraint(model, [a in 1:NA], g_a[a] <= whichcase[a]*max_wordlength)
+        end
+
+        @constraint(model, wordlength_a[0] == wordlength_in)
+        @constraint(model, [a in 1:NA, k in 0:(a-1)], wordlength_left[a] >= wordlength_a[k] - (1-caik[a,1,k])*max_wordlength)
+        @constraint(model, [a in 1:NA, k in 0:(a-1)], wordlength_right[a] >= wordlength_a[k] - (1-caik[a,2,k])*max_wordlength)
+        @constraint(model, [a in 1:NA, k in 0:(a-1)], wordlength_left[a] <= wordlength_a[k] + (1-caik[a,1,k])*max_wordlength)
+        @constraint(model, [a in 1:NA, k in 0:(a-1)], wordlength_right[a] <= wordlength_a[k] + (1-caik[a,2,k])*max_wordlength)
+
+        @constraint(model, [a in 1:NA], wordlength_a[a] >= wordlength_left[a]+adder_input_pos_bitshift[a]+adder_neg_bitshift[a]-1-(Phiai[a,1]+Phiai[a,2])*max_wordlength)
+        @constraint(model, [a in 1:NA], wordlength_a[a] >= wordlength_right[a]+adder_neg_bitshift[a]-1-(Phiai[a,1]+Phiai[a,2])*max_wordlength)
+
+        @constraint(model, [a in 1:NA], wordlength_left[a] + adder_input_pos_bitshift[a] + adder_neg_bitshift[a] + 1 <= wordlength_a[a] + psi_a[a]*(2*max_wordlength))
+        @constraint(model, [a in 1:NA], wordlength_right[a] + adder_neg_bitshift[a] + 1 <= wordlength_a[a] + psi_a[a]*(2*max_wordlength))
+
+        @variable(model, wordlength_ai[1:NA, 0:max_wordlength], Bin)
+        @constraint(model, [a in 1:NA], wordlength_a[a] == sum(i*wordlength_ai[a, i] for i in 1:max_wordlength))
+        @constraint(model, [a in 1:NA], sum(wordlength_ai[a, i] for i in 0:max_wordlength) == 1)
+        @variable(model, 0 <= twopowerwordlength[1:NA] <= 2.0^(max_wordlength))
+
+        @constraint(model, [a in 1:NA, i in 0:max_wordlength], twopowerwordlength[a] <= 2.0^(i)+(1-wordlength_ai[a, i])*2.0^max_wordlength)
+        @constraint(model, [a in 1:NA], twopowerwordlength[a] == sum(2.0^(i)*wordlength_ai[a, i] for i in 1:max_wordlength))
+
+        if max_output_error != 0
+            @constraint(model, [a in 1:NA], twopowerwordlength[a] >= (2.0^(wordlength_in)-1)*(ca[a] + internal_pos_error[a]))
+            @constraint(model, [a in 1:NA], twopowerwordlength[a] <= (2.0^(wordlength_in+1)-1)*(ca[a] + internal_pos_error[a]))
+        else
+            @constraint(model, [a in 1:NA], twopowerwordlength[a] >= (2.0^(wordlength_in)-1)*ca[a])
+            @constraint(model, [a in 1:NA], twopowerwordlength[a] <= (2.0^(wordlength_in+1)-1)*ca[a])
+        end
+
+        @constraint(model, [a in 1:known_min_NA], onebit_a_used[a] == onebit_a[a])
+    end
+
+    if known_min_NA < NA
+        @variable(model, used_adder[(known_min_NA+1):NA], Bin)
+        if use_warmstart
+            for a in (known_min_NA+1):NA
+                set_start_value(used_adder[a], 0)
+            end
+            for a in (known_min_NA+1):nb_var_warmstart
+                set_start_value(used_adder[a], 1)
+            end
+        end
+        if (known_min_NA+2) <= NA
+            @constraint(model, [a in (known_min_NA+2):NA], used_adder[a] <= used_adder[a-1])
+        end
+        @constraint(model, [a in (known_min_NA+1):NA], ca[a] <= used_adder[a]*maximum_value + 1)
+        @constraint(model, [a in (known_min_NA+1):NA], ca[a] >= 3*used_adder[a])
+        @constraint(model, [a in (known_min_NA+1):NA, i in 1:2], caik[a,i,0] >= 1-used_adder[a])
+
+        if wordlength_in > 0
+            @constraint(model, [a in (known_min_NA+1):NA], onebit_a_used[a] <= onebit_a[a]+max_wordlength*(1-used_adder[a]))
+            @constraint(model, [a in (known_min_NA+1):NA], onebit_a_used[a] >= onebit_a[a]-max_wordlength*(1-used_adder[a]))
+            @constraint(model, [a in (known_min_NA+1):NA], onebit_a_used[a] <= max_wordlength*used_adder[a])
+        end
+    end
+
+    # Last adder is equal to an output
+    @constraint(model, ca[end] <= maximum(C))
+    if known_min_NA == NA
+        @constraint(model, ca[end] == sum(C[j]*oaj[end,j] for j in 1:NO))
+    end
+    # At least x adders should be equal to an output at adder n
+    @constraint(model, [n in 1:NA], sum(oaj[a,j] for a in 1:n, j in 1:NO) >= NO - (NA-n))
+    # Adders are outputs or used for following ones or not used
+    @constraint(model, [a in 1:(known_min_NA-1)], sum(oaj[a,j] for j in 1:NO) +
+        sum(caik[var_adder,i,a] for var_adder in (a+1):NA, i in 1:2) >= 1)
+    if known_min_NA < NA
+        @constraint(model, sum(oaj[known_min_NA,j] for j in 1:NO) +
+            sum(caik[var_adder,i,known_min_NA] for var_adder in (known_min_NA+1):NA, i in 1:2) >= 1)
+        @constraint(model, [a in (known_min_NA+1):(NA-1)], sum(oaj[a,j] for j in 1:NO) +
+            sum(caik[var_adder,i,a] for var_adder in (a+1):NA, i in 1:2) >= used_adder[a])
+    end
+
+    # no duplicate adder
+    @variable(model, cadiff[a in 1:(NA-1), aprime in (a+1):NA], Bin)
+    @constraint(model, [a in 1:(known_min_NA-1), aprime in (a+1):known_min_NA], ca[a] <= ca[aprime] - 1 + (maximum_value+1)*cadiff[a, aprime])
+    @constraint(model, [a in 1:(known_min_NA-1), aprime in (a+1):known_min_NA], ca[a] >= ca[aprime] + 1 - (maximum_value+1)*(1 - cadiff[a, aprime]))
+    if known_min_NA < NA
+        @constraint(model, [a in 1:(NA-1), aprime in max(a+1, known_min_NA+1):NA], ca[a] <= ca[aprime] - 1 + (maximum_value+1)*cadiff[a, aprime] + (1-used_adder[aprime]))
+        @constraint(model, [a in 1:(NA-1), aprime in max(a+1, known_min_NA+1):NA], ca[a] >= ca[aprime] + 1 - (maximum_value+1)*(1 - cadiff[a, aprime]) - (1-used_adder[aprime]))
+    end
+
+    if wordlength_in > 0
+        @expression(model, onebit_or_NA_obj, sum(onebit_a_used))
+    else
+        if known_min_NA < NA
+            @expression(model, onebit_or_NA_obj, known_min_NA+sum(used_adder))
+        else
+            @expression(model, onebit_or_NA_obj, NA)
+        end
+    end
+    if minimize_adder_depth
+        @expression(model, ad_obj, NA*onebit_or_NA_obj + max_ad)
+    else
+        @expression(model, ad_obj, onebit_or_NA_obj)
+    end
+    @objective(model, Min, ad_obj)
+
+    return model
+end
+
+
+
+
+"""
+    optimize_increment!(model::Model, model_mcm_forumlation!::Function,
+                        C::Vector{Int}, wordlength::Int, S::Tuple{Int, Int},
+                        verbose::Bool)::Model
+
+Increment NA until a solution is found for the coefficients in `C`.
+"""
+function optimize_increment!(model::Model,
+                             C::Vector{Int}, wordlength::Int,
+                             ;verbose::Bool = false, nb_adders_start::Int=0,
+                             use_warmstart::Bool=false,
+                             use_mcm_warmstart::Bool=true,
+                             use_mcm_warmstart_time_limit_sec::Float64=0.0,
+                             addergraph_warmstart::AdderGraph=AdderGraph(),
+                             # write_model::String="",
+                             kwargs...
+    )::Model
+    if use_warmstart && isempty(addergraph_warmstart)
+        addergraph_warmstart = rpag(C)
+    end
+    known_min_NA = get_min_number_of_adders(C)
+    NA = max(known_min_NA, nb_adders_start)
+    timelimit = time_limit_sec(model)
+    total_solve_time = 0.0
+    current_solve_time = 0.0
+    if use_mcm_warmstart
+        if use_mcm_warmstart_time_limit_sec == 0.0
+            @warn "no use_mcm_warmstart_time_limit_sec value provided, default: 30seconds"
+            use_mcm_warmstart_time_limit_sec = 30.0
+        end
+        set_time_limit_sec(model, use_mcm_warmstart_time_limit_sec)
+        addergraph_warmstart = mcm(model, C; nb_adders_start=nb_adders_start, use_mcm_warmstart=false, addergraph_warmstart=addergraph_warmstart, verbose=verbose, kwargs..., wordlength_in=0, minimize_adder_depth=false, input_error=0, output_error=0, output_errors_dict=Dict{Int, Int}(), output_errors=Vector{Int}())
+        NA = length(get_nodes(addergraph_warmstart))
+        if termination_status(model) == MOI.OPTIMAL
+            known_min_NA = NA
+        end
+        current_solve_time = use_mcm_warmstart_time_limit_sec - time_limit_sec(model) + solve_time(model)
+        total_solve_time += current_solve_time
+    end
+    while true
+        timelimit -= current_solve_time
+        if timelimit <= 0.0
+            break
+        end
+        empty!(model)
+        model_mcm_forumlation!(model, C, wordlength, NA; addergraph_warmstart=addergraph_warmstart, verbose=verbose, known_min_NA=known_min_NA, kwargs...)
+        set_time_limit_sec(model, timelimit)
+        optimize!(model)
+        current_solve_time = solve_time(model)
+        total_solve_time += current_solve_time
+        verbose && println("$(termination_status(model)) for NAmax = $NA, bestNA=$(sum(round(value(model[:ca][a])) != 1 ? 1 : 0 for a in 1:NA)) in $current_solve_time seconds")
+        NA += 1
+        known_min_NA = NA
+        (termination_status(model) in [MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED]) || break
+    end
+    NA -= 1
+    model[:NA] = Vector{Int}()
+    count_solution = 0
+    while has_values(model; result=count_solution+1)
+        count_solution += 1
+        push!(model[:NA], sum(round(value(model[:ca][a]; result=count_solution)) != 1 ? 1 : 0 for a in 1:NA))
+    end
+    if !isempty(model[:NA])
+        NA = model[:NA][1]
+    end
+    model[:total_solve_time] = total_solve_time
+    verbose && println("Total time: $total_solve_time seconds\n\n\n")
+
+    return model
+end
