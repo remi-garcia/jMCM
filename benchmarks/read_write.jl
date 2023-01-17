@@ -1,22 +1,64 @@
 using Statistics
+using AdderGraphs
+
+function generate_vhdl()
+    nb_files_per_folder = 30
+    #all_ag_files = filter!(x -> occursin("pmcm", x), readdir("$(@__DIR__)/addergraphs"))
+    all_ag_files = readdir("$(@__DIR__)/addergraphs")
+    nb_folders = round(Int, length(all_ag_files)/nb_files_per_folder, RoundUp)
+    for i in 1:nb_folders
+        mkdir("$(@__DIR__)/vhdl/vhdl$(i)")
+        for agfile in all_ag_files[(nb_files_per_folder*(i-1))+1:min(nb_files_per_folder*i,length(all_ag_files))]
+            open("$(@__DIR__)/addergraphs/$(agfile)", "r") do readag
+                lines = readlines(readag)
+                println("$i -- $agfile")
+                ag = read_addergraph(lines[1][8:(end-1)])
+                write_vhdl(ag, wordlength_in=8, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_$(get_adder_depth(ag)).vhdl", pipeline=true)
+            end
+        end
+    end
+
+    return nothing
+end
+
+
+function generate_vivado_calls()
+    all_vhdlfoders = readdir("$(@__DIR__)/vhdl")
+    for current_folder in all_vhdlfoders
+        mkdir("$(@__DIR__)/vhdl/$(current_folder)/vhdl")
+        mkdir("$(@__DIR__)/vhdl/$(current_folder)/dot")
+        cp("$(@__DIR__)/synthesis_vivado.sh", "$(@__DIR__)/vhdl/$(current_folder)/synthesis.sh")
+        open("$(@__DIR__)/vhdl/$(current_folder)/fvcalls.txt", "w") do writefile
+            all_files = filter!(x -> occursin(".vhdl", x), readdir("$(@__DIR__)/vhdl/$(current_folder)"))
+            for current_file in all_files
+                write(writefile,
+                    "python \$SOFTWARE_FOLDER/flopoco/tools/vivado-runsyn.py --implement --vhdl $(current_file)\n"
+                )
+            end
+        end
+    end
+
+    return nothing
+end
 
 function generate_flopocovivado_calls()
+    nb_files_per_folder = 30
     all_ag_files = readdir("$(@__DIR__)/addergraphs")
-    nb_folders = round(Int, length(all_ag_files)/10, RoundUp)
+    nb_folders = round(Int, length(all_ag_files)/nb_files_per_folder, RoundUp)
     for i in 1:nb_folders
         mkdir("$(@__DIR__)/vhdl/vhdl$i")
         mkdir("$(@__DIR__)/vhdl/vhdl$i/vhdl")
         mkdir("$(@__DIR__)/vhdl/vhdl$i/dot")
         cp("$(@__DIR__)/synthesis.sh", "$(@__DIR__)/vhdl/vhdl$i/synthesis.sh")
         open("$(@__DIR__)/vhdl/vhdl$i/fvcalls.txt", "w") do writefile
-            for agfile in all_ag_files[(10*(i-1))+1:min(10*i,length(all_ag_files))]
+            for agfile in all_ag_files[(nb_files_per_folder*(i-1))+1:min(nb_files_per_folder*i,length(all_ag_files))]
                 open("$(@__DIR__)/addergraphs/$(agfile)", "r") do readag
                     lines = readlines(readag)
                     println("$i -- $agfile")
                     ag = lines[1]
                     trunc = lines[2]
                     write(writefile,
-                        "flopoco IntConstMultShiftAdd wIn=8 $(ag) $(trunc) outputFile=$(agfile[1:(end-4)]).vhdl\n"
+                        "flopoco IntConstMultShiftAdd wIn=8 $(ag) $(trunc) outputFile=$(agfile[1:(end-4)]).vhdl Wrapper\n"
                     )
                     write(writefile,
                         "python \$SOFTWARE_FOLDER/flopoco/tools/vivado-runsyn.py --implement --vhdl $(agfile[1:(end-4)]).vhdl\n"
@@ -1369,17 +1411,17 @@ function results_to_gain_plot_average()
 \\caption{}\\label{fig:averageandmaxgain}
 % Min reduction
 % AD/Adders
-% \\#LUTs, $(get_min_reduction(Lmcmb, Ltmcm))
-% Delay, $(get_min_reduction(Dmcmb, Dtmcm))
-% Power, $(get_min_reduction(Pmcmb, Ptmcm))
+% \\#LUTs, $(get_min_reduction(Lmcma, Lmcmad))
+% Delay, $(get_min_reduction(Dmcma, Dmcmad))
+% Power, $(get_min_reduction(Pmcma, Pmcmad))
 % Bits/AD
 % \\#LUTs, $(get_min_reduction(Lmcmad, Lmcmb))
 % Delay, $(get_min_reduction(Dmcmad, Dmcmb))
 % Power, $(get_min_reduction(Pmcmad, Pmcmb))
 % Truncation/Bits
-% \\#LUTs, $(get_min_reduction(Lmcma, Lmcmad))
-% Delay, $(get_min_reduction(Dmcma, Dmcmad))
-% Power, $(get_min_reduction(Pmcma, Pmcmad))
+% \\#LUTs, $(get_min_reduction(Lmcmb, Ltmcm))
+% Delay, $(get_min_reduction(Dmcmb, Dtmcm))
+% Power, $(get_min_reduction(Pmcmb, Ptmcm))
 \\end{figure}
 """
 

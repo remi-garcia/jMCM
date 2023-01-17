@@ -23,7 +23,27 @@ docs/site/
 # environment.
 Manifest.toml
 
-benchmarks/*addergraphs
-benchmarks/*vhdl
+benchmarks/*addergraphs*
+benchmarks/*vhdl*
 benchmarks/*tex
 benchmarks/*test
+benchmarks_crypto/*addergraphs*
+benchmarks_crypto/*vhdl*
+benchmarks_crypto/*tex
+benchmarks_crypto/*test
+benchmarks_dnn/*addergraphs*
+benchmarks_dnn/*vhdl*
+benchmarks_dnn/*tex
+benchmarks_dnn/*test
+benchmarks_pmcm/*addergraphs*
+benchmarks_pmcm/*vhdl*
+benchmarks_pmcm/*tex
+benchmarks_pmcm/*test
+benchmarks_integers/*addergraphs*
+benchmarks_integers/*vhdl
+benchmarks_integers/*tex
+benchmarks_integers/*test
+benchmarks_lutsdsp/*addergraphs*
+benchmarks_lutsdsp/*vhdl*
+benchmarks_lutsdsp/*tex
+benchmarks_lutsdsp/*test

@@ -1,5 +1,5 @@
-function generate_rpag_cmd(v::Vector{Int})
-    return "rpag --cost_model=hl_min_ad "*join(v, " ")
+function generate_rpag_cmd(v::Vector{Int}; with_register_cost::Bool=false)
+    return "rpag $(with_register_cost ? "" : "--cost_model=hl_min_ad ")"*join(v, " ")
 end
 
 
@@ -16,12 +16,12 @@ function rpagcall(rpag_cmd::String) # "rpag --cost_model=hl_min_ad 7 19 31"
 end
 
 
-function rpag(C::Vector{Int})
+function rpag(C::Vector{Int}; kwargs...)
     if isempty(Libc.find_library("librpag"))
         @warn "librpag not found"
         return AdderGraph()
     end
-    s = split(rpagcall(generate_rpag_cmd(C)), "\n")
+    s = split(rpagcall(generate_rpag_cmd(C; kwargs...)), "\n")
     addergraph_str = ""
     for val in s
         if startswith(val, "pipelined_adder_graph=")
