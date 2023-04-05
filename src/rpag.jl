@@ -1,5 +1,5 @@
 function generate_rpag_cmd(v::Vector{Int}; with_register_cost::Bool=false, nb_extra_stages::Int=0)
-    return "rpag $(with_register_cost ? "" : "--cost_model=hl_min_ad ")$(nb_extra_stages==0 ? "", "--no_of_extra_stages=$(nb_extra_stages) ")"*join(v, " ")
+    return "rpag $(with_register_cost ? "" : "--cost_model=hl_min_ad ")$(nb_extra_stages==0 ? "" : "--no_of_extra_stages=$(nb_extra_stages) ")"*join(v, " ")
 end
 
 
