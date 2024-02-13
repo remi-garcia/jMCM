@@ -7,7 +7,7 @@ include("$(@__DIR__())/utils.jl")
 #include("$(@__DIR__())/read_write.jl")
 
 
-function benchmarks(which_benchmark::Int, which_mcm::String, minad::Bool=false, use_dsp::Bool=false)
+function benchmarks(which_benchmark::Int, which_mcm::String, mincrit::Bool=false, use_dsp::Bool=false, with_pipelining_cost::Bool=false)
     wordlength_data = 8
     wordlength_in = 0
     output_error_init = output_error = 0
@@ -25,8 +25,11 @@ function benchmarks(which_benchmark::Int, which_mcm::String, minad::Bool=false, 
         end
         resultname = "tmcm"
     end
-    if minad
-        resultname *= "ad"
+    if mincrit
+        resultname *= "cp"
+    end
+    if with_pipelining_cost
+        resultname = "p"*resultname
     end
     max_dsp = 0
     cost_dsp = 0.0
@@ -39,7 +42,7 @@ function benchmarks(which_benchmark::Int, which_mcm::String, minad::Bool=false, 
         use_rpag = true
         max_dsp = 0
         use_dsp = false
-        minad = false
+        mincrit = false
     end
 
     all_benchmarks = Vector{Tuple{String, String, Int, Int, Int, Vector{Int}, Vector{Int}}}()
@@ -106,7 +109,7 @@ function benchmarks(which_benchmark::Int, which_mcm::String, minad::Bool=false, 
         set_optimizer_attributes(model, "PoolSolutions" => 100)
         #set_silent(model)
         set_time_limit_sec(model, 1800)
-        @time ag = mcm(model, oddabsC, use_mcm_warmstart=true, use_mcm_warmstart_time_limit_sec=30.0, wordlength_in=wordlength_in, output_errors_dict=output_errors, verbose=true, minimize_adder_depth=minad, nb_adders_start=get_max_number_of_adders(oddabsC), use_warmstart=true)
+        @time ag = mcm(model, oddabsC, use_mcm_warmstart=true, with_pipelining_cost=with_pipelining_cost, adder_cost=Int(!with_pipelining_cost), use_mcm_warmstart_time_limit_sec=30.0, wordlength_in=wordlength_in, output_errors_dict=output_errors, verbose=true, minimize_critical_path=mincrit, nb_adders_start=get_max_number_of_adders(oddabsC), use_warmstart=true)
         println("Solving time: $(model[:total_solve_time])")
 
         not_opt = ""
@@ -119,21 +122,21 @@ function benchmarks(which_benchmark::Int, which_mcm::String, minad::Bool=false, 
 
         open("$(@__DIR__)/results_$(resultname).csv", "a") do writefile
             ag_name = "$(benchmark_info[1])_$(resultname)$(epsilon_frac != 0 ? epsilon_frac : "").txt"
-            # benchmark_name, method, minimize_ad, solve_time, NA, AD, datawl, Bits, max_epsilon, wloutfullprecision, wlout, epsilon_frac
-            write(writefile, "$(benchmark_info[1]), $(ag_name), $(resultname), $(minad), $(model[:total_solve_time])$not_opt, $(length(get_nodes(ag))), $(get_adder_depth(ag)), $(wordlength_data), $(compute_total_nb_onebit_adders(ag, wordlength_data)), $(maximum(values(output_errors))), $(wordlength_out_full_precision), $(wordlength_out_current_precision), 1/$(epsilon_frac)\n")
+            # benchmark_name, ag_name, method, minimize_ad, pipeline, solve_time, NA, AD, nb_registers, datawl, Bits, nb_registers_bits, max_epsilon, wloutfullprecision, wlout, epsilon_frac
+            write(writefile, "$(benchmark_info[1]), $(ag_name), $(resultname), $(mincrit), $(with_pipelining_cost), $(model[:total_solve_time])$not_opt, $(length(get_nodes(ag))), $(get_adder_depth(ag)), $(get_nb_registers(ag)-length(get_nodes(ag))), $(wordlength_data), $(compute_total_nb_onebit_adders(ag, wordlength_data)), $(get_nb_register_bits(ag, wordlength_data)-compute_total_nb_onebit_adders(ag, wordlength_data)), $(maximum(values(output_errors))), $(wordlength_out_full_precision), $(wordlength_out_current_precision), 1/$(epsilon_frac)\n")
         end
         open("$(@__DIR__)/addergraphs/$(benchmark_info[1])_$(resultname)$(epsilon_frac != 0 ? epsilon_frac : "").txt", "w") do writefile
-            write(writefile, "$(write_addergraph(ag))\n$(write_addergraph_truncations(ag))\n")
+            write(writefile, "$(write_addergraph(ag, pipeline=with_pipelining_cost))\n$(write_addergraph_truncations(ag))\n")
         end
     else
-        ag = rpag(C)
+        ag = rpag(C, with_register_cost=with_pipelining_cost)
         open("$(@__DIR__)/results_$(resultname).csv", "a") do writefile
             ag_name = "$(benchmark_info[1])_$(resultname)$(epsilon_frac != 0 ? epsilon_frac : "").txt"
-            # benchmark_name, method, minimize_ad, solve_time, NA, AD, datawl, Bits, max_epsilon, wloutfullprecision, wlout, epsilon_frac
-            write(writefile, "$(benchmark_info[1]), $(ag_name), $(resultname), $(minad), -, $(length(get_nodes(ag))), $(get_adder_depth(ag)), $(wordlength_data), $(compute_total_nb_onebit_adders(ag, wordlength_data)), $(maximum(values(output_errors))), $(wordlength_out_full_precision), $(wordlength_out_current_precision), 1/$(epsilon_frac)\n")
+            # benchmark_name, ag_name, method, minimize_ad, pipeline, solve_time, NA, AD, nb_registers, datawl, Bits, nb_registers_bits, max_epsilon, wloutfullprecision, wlout, epsilon_frac
+            write(writefile, "$(benchmark_info[1]), $(ag_name), $(resultname), $(mincrit), $(with_pipelining_cost), -, $(length(get_nodes(ag))), $(get_adder_depth(ag)), $(get_nb_registers(ag)-length(get_nodes(ag))), $(wordlength_data), $(compute_total_nb_onebit_adders(ag, wordlength_data)), $(get_nb_register_bits(ag, wordlength_data)-compute_total_nb_onebit_adders(ag, wordlength_data)), $(maximum(values(output_errors))), $(wordlength_out_full_precision), $(wordlength_out_current_precision), 1/$(epsilon_frac)\n")
         end
         open("$(@__DIR__)/addergraphs/$(benchmark_info[1])_$(resultname)$(epsilon_frac != 0 ? epsilon_frac : "").txt", "w") do writefile
-            write(writefile, "$(write_addergraph(ag))\n$(write_addergraph_truncations(ag))\n")
+            write(writefile, "$(write_addergraph(ag, pipeline=with_pipelining_cost))\n$(write_addergraph_truncations(ag))\n")
         end
     end
 
@@ -144,7 +147,7 @@ end
 
 if length(ARGS) > 0
     if length(ARGS) >= 3
-        benchmarks(parse(Int, ARGS[1]), ARGS[2], "ad" in ARGS[3:end], "dsp" in ARGS[3:end])
+        benchmarks(parse(Int, ARGS[1]), ARGS[2], "cp" in ARGS[3:end], "dsp" in ARGS[3:end], "pipeline" in ARGS[3:end])
     else
         benchmarks(parse(Int, ARGS[1]), ARGS[2])
     end

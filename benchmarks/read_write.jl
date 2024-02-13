@@ -1,8 +1,33 @@
 using Statistics
 using AdderGraphs
 
+function generate_vhdl_all()
+    nb_files_per_folder = 10
+    wordlength_in = 8
+    all_ag_files = readdir("$(@__DIR__)/addergraphs")
+    nb_folders = round(Int, length(all_ag_files)/nb_files_per_folder, RoundUp)
+    for i in 1:nb_folders
+        mkdir("$(@__DIR__)/vhdl/vhdl$(i)")
+        for agfile in all_ag_files[(nb_files_per_folder*(i-1))+1:min(nb_files_per_folder*i,length(all_ag_files))]
+            open("$(@__DIR__)/addergraphs/$(agfile)", "r") do readag
+                lines = readlines(readag)
+                println("$i -- $agfile")
+                ag = read_addergraph(lines[1][8:(end-1)])
+                write_vhdl(ag, wordlength_in=wordlength_in, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_ag.vhdl", pipeline_inout=true)
+                write_vhdl(ag, wordlength_in=wordlength_in, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_luts.vhdl", no_addergraph=true, use_tables=true, pipeline_inout=true)
+                write_vhdl(ag, wordlength_in=wordlength_in, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_prod.vhdl", no_addergraph=true, pipeline_inout=true)
+                write_vhdl(ag, wordlength_in=wordlength_in, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_force_dsp.vhdl", no_addergraph=true, force_dsp=true, pipeline_inout=true)
+            end
+        end
+    end
+
+    return nothing
+end
+
+
 function generate_vhdl()
-    nb_files_per_folder = 30
+    nb_files_per_folder = 40
+    wordlength_in = 8
     #all_ag_files = filter!(x -> occursin("pmcm", x), readdir("$(@__DIR__)/addergraphs"))
     all_ag_files = readdir("$(@__DIR__)/addergraphs")
     nb_folders = round(Int, length(all_ag_files)/nb_files_per_folder, RoundUp)
@@ -13,7 +38,7 @@ function generate_vhdl()
                 lines = readlines(readag)
                 println("$i -- $agfile")
                 ag = read_addergraph(lines[1][8:(end-1)])
-                write_vhdl(ag, wordlength_in=8, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_$(get_adder_depth(ag)).vhdl", pipeline=true)
+                write_vhdl(ag, wordlength_in=wordlength_in, vhdl_filename="$(@__DIR__)/vhdl/vhdl$(i)/$(agfile[1:(end-4)])_$(get_adder_depth(ag)).vhdl", pipeline=true, pipeline_inout=true)
             end
         end
     end
@@ -74,7 +99,7 @@ end
 
 
 function merge_hw_results()
-    all_hw_folders = readdir("$(@__DIR__)/vhdl")
+    all_hw_folders = filter!(x -> occursin("vhdl", x), readdir("$(@__DIR__)/vhdl"))
     nb_folders = length(all_hw_folders)
     cp("$(@__DIR__)/vhdl/vhdl1/vivadoSynResults.csv", "$(@__DIR__)/vhdl/results_hw.csv")
     open("$(@__DIR__)/vhdl/results_hw.csv", "a") do writefile
