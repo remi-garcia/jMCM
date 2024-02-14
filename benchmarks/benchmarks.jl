@@ -71,7 +71,8 @@ function benchmarks(which_benchmark::Int, which_mcm::String, mincrit::Bool=false
     wordlength_out_full_precision = round(Int, log2((2^wordlength_data-1)*maximum(abs.(C))), RoundUp)
     wordlength_out_current_precision = wordlength_out_full_precision
     epsilon_frac = -output_error_init
-    oddabsC = filter!(x -> x > 1, unique!(odd.(abs.(C))))
+    # oddabsC = filter!(x -> x > 1, unique!(odd.(abs.(C))))
+    oddabsC = filter!(x -> x >= 1, unique!(odd.(abs.(C))))
     println("Coefficients: $oddabsC")
     if output_error_init < 0
         if output_error_init == -1
