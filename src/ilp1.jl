@@ -53,7 +53,7 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     end
     addernodes = Vector{AdderNode}()
     output_values = Vector{Int}()
-    addernodes_value_to_index = Dict{Int, Int}()
+    addernodes_value_to_index = Dict{Tuple{Int, Int}, Int}()
     nb_var_warmstart = 0
     use_warmstart = false
     if !isempty(addergraph_warmstart)
@@ -63,9 +63,15 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
             sort!(addernode.inputs, by=x->x.shift, rev=true)
         end
         output_values = get_outputs(addergraph_warmstart)
-        addernodes_value_to_index = Dict{Int, Int}([get_value(addernodes[i]) => i for i in 1:length(addernodes)])
-        addernodes_value_to_index[1] = 0
-        nb_var_warmstart = min(NA, length(addernodes))
+        addernodes_value_to_index = Dict{Tuple{Int, Int}, Int}([(get_value(addernodes[i]), get_depth(addernodes[i])) => i for i in 1:length(addernodes)])
+        addernodes_value_to_index[(1, 0)] = 0
+        nb_var_warmstart = length(addernodes)
+        verbose && println("Number of adders in warm start: $(nb_var_warmstart)")
+        verbose && println("Warmstart adder graph: $(write_addergraph(addergraph_warmstart))")
+        if nb_var_warmstart > NA
+            @warn "Warm start cannot be used"
+            nb_var_warmstart = NA
+        end
     end
     Smin, Smax = -wordlength, wordlength
     if no_right_shifts
@@ -126,15 +132,26 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
             if get_value(addernodes[a]) > maximum_value
                 continue
             end
-            left_input, right_input = addernodes_value_to_index[get_input_addernode_values(addernodes[a])[1]], addernodes_value_to_index[get_input_addernode_values(addernodes[a])[2]]
-            left_input_value = 1
-            if left_input != 0
-                left_input_value = get_value(addernodes[left_input])
+            left_input_value = get_input_addernode_values(addernodes[a])[1]
+            right_input_value = get_input_addernode_values(addernodes[a])[2]
+            depth_input_left = get_depth(addernodes[a]) - 1
+            while get(addernodes_value_to_index, (left_input_value, depth_input_left), -1) == -1
+                depth_input_left -= 1
             end
-            right_input_value = 1
-            if right_input != 0
-                right_input_value = get_value(addernodes[right_input])
+            depth_input_right = get_depth(addernodes[a]) - 1
+            while get(addernodes_value_to_index, (right_input_value, depth_input_right), -1) == -1
+                depth_input_right -= 1
             end
+            left_input = addernodes_value_to_index[left_input_value, depth_input_left]
+            right_input = addernodes_value_to_index[right_input_value, depth_input_right]
+            # left_input_value = 1
+            # if left_input != 0
+            #     left_input_value = get_value(addernodes[left_input])
+            # end
+            # right_input_value = 1
+            # if right_input != 0
+            #     right_input_value = get_value(addernodes[right_input])
+            # end
             left_shift, right_shift = get_input_shifts(addernodes[a])
             left_negative, right_negative = are_negative_inputs(addernodes[a])
             set_start_value(ca[a], get_value(addernodes[a]))
@@ -564,6 +581,7 @@ function optimize_increment!(model::Model,
     )::Model
     if use_warmstart && isempty(addergraph_warmstart)
         addergraph_warmstart = rpag(C)
+        verbose && println("Warmstart adder graph rpag: $(write_addergraph(addergraph_warmstart))")
     end
     known_min_NA = get_min_number_of_adders(C)
     NA = max(known_min_NA, nb_adders_start)

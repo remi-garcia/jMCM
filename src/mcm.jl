@@ -83,9 +83,16 @@ function mcm(model::Model,
             subtraction = [value(model[:cai_left_shsg][i]; result = current_result) < 0, value(model[:cai_right_sg][i]; result = current_result) < 0]
             left_addernode = InputEdge(get_origin(addergraph), input_shift+node_shift, subtraction[1], truncateleft)
             right_addernode = InputEdge(get_origin(addergraph), node_shift, subtraction[2], truncateright)
-            if !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,1]; result = current_result)))) && !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,2]; result = current_result))))
+            if !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,1]; result = current_result))))
                 left_addernode = InputEdge(get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,1]; result = current_result)))[end], input_shift+node_shift, subtraction[1], truncateleft)
+            end
+            if !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,2]; result = current_result))))
                 right_addernode = InputEdge(get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,2]; result = current_result)))[end], node_shift, subtraction[2], truncateright)
+            end
+            if !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:ca][i]; result = current_result))))
+                if max(get_depth(left_addernode), get_depth(right_addernode))+1 <= maximum(get_depth.(get_addernodes_by_value(addergraph, round(Int, value(model[:ca][i]; result = current_result)))))+1
+                    continue
+                end
             end
             if model[:has_ada]
                 push_node!(addergraph,
