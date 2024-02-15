@@ -3,13 +3,20 @@ function generate_rpag_cmd(v::Vector{Int}; with_register_cost::Bool=false, nb_ex
 end
 
 
-function rpagcall(rpag_cmd::String) # "rpag --cost_model=hl_min_ad 7 19 31"
+function rpagcall(rpag_cmd::String; use_rpag_lib::Bool=false, kwargs...) # "rpag --cost_model=hl_min_ad 7 19 31"
     filename = tempname()
     argv = Vector{String}(string.(split(rpag_cmd)))
     open(filename, "w") do fileout
         redirect_stdout(fileout) do
-            ccall((:main, "librpag"), Cint, (Cint, Ptr{Ptr{UInt8}}), length(argv), argv)
-            Base.Libc.flush_cstdio()
+            if use_rpag_lib
+                ccall((:main, "librpag"), Cint, (Cint, Ptr{Ptr{UInt8}}), length(argv), argv)
+                Base.Libc.flush_cstdio()
+            else
+                try
+                    run(`$(argv)`)
+                catch
+                end
+            end
         end
     end
     return read(filename, String)
@@ -21,7 +28,7 @@ function rpag(C::Vector{Int}; kwargs...)
         @warn "librpag not found"
         return AdderGraph()
     end
-    s = split(rpagcall(generate_rpag_cmd(C; kwargs...)), "\n")
+    s = split(rpagcall(generate_rpag_cmd(C; kwargs...), kwargs...), "\n")
     addergraph_str = ""
     for val in s
         if startswith(val, "pipelined_adder_graph=")
