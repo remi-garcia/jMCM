@@ -1,5 +1,7 @@
 using Pkg
 Pkg.activate("$(@__DIR__())/../")
+ENV["JULIA_PKG_USE_CLI_GIT"]=true
+Pkg.update()
 
 using AdderGraphs, JuMP, Gurobi, jMCM
 
