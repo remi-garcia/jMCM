@@ -74,7 +74,7 @@ function main(args)
     end
     # set_optimizer_attributes(model, "PoolSolutions" => 100)
     !all_args.verbose && set_silent(model)
-    if all_args.timelimit != nothing
+    if !isnothing(all_args.timelimit)
         set_time_limit_sec(model, all_args.timelimit)
     end
     ag = mcm(model,
