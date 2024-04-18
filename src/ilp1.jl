@@ -584,7 +584,7 @@ function optimize_increment!(model::Model,
         verbose && println("Warmstart adder graph rpag: $(write_addergraph(addergraph_warmstart))")
     end
     known_min_NA = get_min_number_of_adders(C)
-    NA = max(known_min_NA, nb_adders_start)
+    NA = max(known_min_NA, nb_adders_start)/
     timelimit = time_limit_sec(model)
     total_solve_time = 0.0
     current_solve_time = 0.0
@@ -613,13 +613,17 @@ function optimize_increment!(model::Model,
         NA = NA+increase_NA
     end
     while true
-        timelimit -= current_solve_time
-        if timelimit <= 0.0
-            break
+        if !isnothing(timelimit)
+            timelimit -= current_solve_time
+            if timelimit <= 0.0
+                break
+            end
         end
         empty!(model)
         model_mcm_forumlation!(model, C, wordlength, NA; addergraph_warmstart=addergraph_warmstart, verbose=verbose, known_min_NA=known_min_NA, with_pipelining_cost=with_pipelining_cost, kwargs...)
-        set_time_limit_sec(model, timelimit)
+        if !isnothing(timelimit)
+            set_time_limit_sec(model, timelimit)
+        end
         optimize!(model)
         current_solve_time = solve_time(model)
         total_solve_time += current_solve_time
