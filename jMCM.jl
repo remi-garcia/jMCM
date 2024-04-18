@@ -7,8 +7,8 @@ using .jMCM
 mutable struct jMCM_args
     target_consts::Vector{Int}
     timelimit::Union{Nothing, Float64}
-    wIn::Union{Nothing, Int}
-    wOut::Union{Nothing, Int}
+    wIn::Int
+    wOut::Int
     pipeline::Bool
     verbose::Bool
     min_ad::Bool
@@ -22,7 +22,7 @@ mutable struct jMCM_args
 end
 
 function jMCM_args()
-    return jMCM_args(Vector{Int}(), nothing, nothing, nothing, false, false, false, 0, false, false, 0, 0, "addergraph.txt", "addergraph.vhdl")
+    return jMCM_args(Vector{Int}(), nothing, 0, 0, false, false, false, 0, false, false, 0, 0, "addergraph.txt", "addergraph.vhdl")
 end
 
 function read_args(args)
