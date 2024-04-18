@@ -584,7 +584,7 @@ function optimize_increment!(model::Model,
         verbose && println("Warmstart adder graph rpag: $(write_addergraph(addergraph_warmstart))")
     end
     known_min_NA = get_min_number_of_adders(C)
-    NA = max(known_min_NA, nb_adders_start)/
+    NA = max(known_min_NA, nb_adders_start)
     timelimit = time_limit_sec(model)
     total_solve_time = 0.0
     current_solve_time = 0.0
