@@ -137,10 +137,16 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
             depth_input_left = get_depth(addernodes[a]) - 1
             while get(addernodes_value_to_index, (left_input_value, depth_input_left), -1) == -1
                 depth_input_left -= 1
+                if depth_input_left == -1
+                    break
+                end
             end
             depth_input_right = get_depth(addernodes[a]) - 1
             while get(addernodes_value_to_index, (right_input_value, depth_input_right), -1) == -1
                 depth_input_right -= 1
+                if depth_input_right == -1
+                    break
+                end
             end
             left_input = addernodes_value_to_index[left_input_value, depth_input_left]
             right_input = addernodes_value_to_index[right_input_value, depth_input_right]
@@ -496,9 +502,12 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     if with_pipelining_cost
         @variable(model, ca_used_at_ad[0:(NA-1), 1:NA], Bin)
         if known_min_NA < NA
+            @constraint(model, [a in 1:known_min_NA, k in 0:(a-1)], ada[k] <= ada[a])
+            @constraint(model, [a in (known_min_NA+1):NA, k in 0:(a-1)], ada[k] <= ada[a] + NA*used_adder[a])
             @constraint(model, [a in 0:(known_min_NA-1), i in 1:2, ad in 1:NA, k in (a+1):known_min_NA], NA*ca_used_at_ad[a, ad] >= ada[k]-ad+1 - (1-caik[k,i,a])*2*NA)
             @constraint(model, [a in 0:(NA-1), i in 1:2, ad in 1:NA, k in (max(a, known_min_NA)+1):NA], NA*ca_used_at_ad[a, ad] >= ada[k]-ad+1 - (1-caik[k,i,a])*2*NA - (1-used_adder[k])*2*NA)
         else
+            @constraint(model, [a in 1:NA, k in 0:(a-1)], ada[k] <= ada[a])
             @constraint(model, [a in 0:(NA-1), i in 1:2, ad in 1:NA, k in (a+1):NA], NA*ca_used_at_ad[a, ad] >= ada[k]-ad+1 - (1-caik[k,i,a])*NA)
         end
         @variable(model, used_as_output[0:NA], Bin)
@@ -555,6 +564,8 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     end
     @objective(model, Min, ad_obj)
 
+    verbose && println("Model generated")
+
     return model
 end
 
@@ -562,8 +573,8 @@ end
 
 
 """
-    optimize_increment!(model::Model, model_mcm_forumlation!::Function,
-                        C::Vector{Int}, wordlength::Int, S::Tuple{Int, Int},
+    optimize_increment!(model::Model, 
+                        C::Vector{Int}, wordlength::Int;
                         verbose::Bool)::Model
 
 Increment NA until a solution is found for the coefficients in `C`.
