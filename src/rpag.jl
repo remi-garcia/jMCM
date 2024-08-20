@@ -28,7 +28,7 @@ function rpag(C::Vector{Int}; kwargs...)
         @warn "librpag not found"
         return AdderGraph()
     end
-    s = split(rpagcall(generate_rpag_cmd(C; kwargs...), kwargs...), "\n")
+    s = split(rpagcall(generate_rpag_cmd(C; kwargs...); kwargs...), "\n")
     addergraph_str = ""
     for val in s
         if startswith(val, "pipelined_adder_graph=")
