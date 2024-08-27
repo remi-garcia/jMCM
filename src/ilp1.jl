@@ -37,6 +37,8 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
                                 addergraph_warmstart::AdderGraph,
                                 use_big_m::Bool=true,
                                 no_right_shifts::Bool=false,
+                                ws_values::Dict{String, Float64}=Dict{String, Float64}(),
+                                kwargs...
     )::Model
     if no_one_bit_adders
         wordlength_in = 0
@@ -52,7 +54,6 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
         end
     end
     addernodes = Vector{AdderNode}()
-    output_values = Vector{Int}()
     addernodes_value_to_index = Dict{Tuple{Int, Int}, Int}()
     nb_var_warmstart = 0
     use_warmstart = false
@@ -62,7 +63,6 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
         for addernode in addernodes
             sort!(addernode.inputs, by=x->x.shift, rev=true)
         end
-        output_values = get_outputs(addergraph_warmstart)
         addernodes_value_to_index = Dict{Tuple{Int, Int}, Int}([(get_value(addernodes[i]), get_depth(addernodes[i])) => i for i in 1:length(addernodes)])
         addernodes_value_to_index[(1, 0)] = 0
         nb_var_warmstart = length(addernodes)
@@ -124,91 +124,6 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
 
     @variable(model, 0 <= force_odd[1:NA] <= maximum_value, Int)
     @variable(model, Psias[1:NA, Smin:0], Bin)
-
-    if use_warmstart
-        set_start_value(ca[0], 1)
-        current_adder_depth_max_value = 0
-        for a in 1:nb_var_warmstart
-            if get_value(addernodes[a]) > maximum_value
-                continue
-            end
-            left_input_value = get_input_addernode_values(addernodes[a])[1]
-            right_input_value = get_input_addernode_values(addernodes[a])[2]
-            depth_input_left = get_depth(addernodes[a]) - 1
-            while get(addernodes_value_to_index, (left_input_value, depth_input_left), -1) == -1
-                depth_input_left -= 1
-                if depth_input_left == -1
-                    break
-                end
-            end
-            depth_input_right = get_depth(addernodes[a]) - 1
-            while get(addernodes_value_to_index, (right_input_value, depth_input_right), -1) == -1
-                depth_input_right -= 1
-                if depth_input_right == -1
-                    break
-                end
-            end
-            left_input = addernodes_value_to_index[left_input_value, depth_input_left]
-            right_input = addernodes_value_to_index[right_input_value, depth_input_right]
-            # left_input_value = 1
-            # if left_input != 0
-            #     left_input_value = get_value(addernodes[left_input])
-            # end
-            # right_input_value = 1
-            # if right_input != 0
-            #     right_input_value = get_value(addernodes[right_input])
-            # end
-            left_shift, right_shift = get_input_shifts(addernodes[a])
-            left_negative, right_negative = are_negative_inputs(addernodes[a])
-            set_start_value(ca[a], get_value(addernodes[a]))
-            set_start_value(ca_no_shift[a], get_value(addernodes[a])*(2^max(-right_shift, 0)))
-            set_start_value(force_odd[a], div(get_value(addernodes[a]), 2))
-            if left_input_value <= maximum_value-1 && right_input_value <= maximum_value-1
-                set_start_value(cai[a, 1], left_input_value)
-                set_start_value(cai[a, 2], right_input_value)
-                set_start_value(cai_left_sh[a], left_input_value*(2^max(0, left_shift)))
-                if left_negative
-                    set_start_value(cai_left_shsg[a], -left_input_value*(2^max(0, left_shift)))
-                else
-                    set_start_value(cai_left_shsg[a], left_input_value*(2^max(0, left_shift)))
-                end
-                if right_negative
-                    set_start_value(cai_right_sg[a], -right_input_value)
-                else
-                    set_start_value(cai_right_sg[a], right_input_value)
-                end
-                for k in 0:(a-1)
-                    set_start_value(caik[a, 1, k], 0)
-                    set_start_value(caik[a, 2, k], 0)
-                end
-                set_start_value(caik[a, 1, left_input], 1)
-                set_start_value(caik[a, 2, right_input], 1)
-                set_start_value(Phiai[a, 1], left_negative)
-                set_start_value(Phiai[a, 2], right_negative)
-                set_start_value.(Psias[a, :], 0)
-                set_start_value.(phias[a, :], 0)
-                if right_shift >= Smin && right_shift <= 0
-                    set_start_value(Psias[a, right_shift], 1)
-                end
-                if left_shift >= 0 && left_shift <= Smax
-                    set_start_value(phias[a, left_shift], 1)
-                elseif left_shift < 0
-                    set_start_value(phias[a, 0], 1)
-                end
-                if minimize_adder_depth || adder_depth_max != 0
-                    set_start_value(ada[a], get_depth(addernodes[a]))
-                    current_adder_depth_max_value = max(current_adder_depth_max_value, get_depth(addernodes[a]))
-                end
-            end
-            set_start_value.(oaj[a, :], 0)
-            if get_value(addernodes[a]) in C
-                set_start_value(oaj[a, findfirst(isequal(get_value(addernodes[a])), C)], 1)
-            end
-        end
-        if minimize_adder_depth || adder_depth_max != 0
-            set_start_value(max_ad, current_adder_depth_max_value)
-        end
-    end
 
     # C1
     fix(ca[0], 1, force=true)
@@ -444,19 +359,13 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
 
     if known_min_NA < NA
         @variable(model, used_adder[(known_min_NA+1):NA], Bin)
-        if use_warmstart
-            for a in (known_min_NA+1):NA
-                set_start_value(used_adder[a], 0)
-            end
-            for a in (known_min_NA+1):nb_var_warmstart
-                set_start_value(used_adder[a], 1)
-            end
-        end
         if (known_min_NA+2) <= NA
             @constraint(model, [a in (known_min_NA+2):NA], used_adder[a] <= used_adder[a-1])
         end
         @constraint(model, [a in (known_min_NA+1):NA], ca[a] <= used_adder[a]*maximum_value + 1)
-        @constraint(model, [a in (known_min_NA+1):NA], ca[a] >= 3*used_adder[a])
+        if !with_pipelining_cost
+            @constraint(model, [a in (known_min_NA+1):NA], ca[a] >= 3*used_adder[a])
+        end
         @constraint(model, [a in (known_min_NA+1):NA, i in 1:2], caik[a,i,0] >= 1-used_adder[a])
 
         if wordlength_in > 0
@@ -564,6 +473,152 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     end
     @objective(model, Min, ad_obj)
 
+    if use_warmstart
+        if isempty(ws_values)
+            fix(ca[0], 1, force=true)
+            current_adder_depth_max_value = 0
+            for a in 1:nb_var_warmstart
+                curr_value = get_value(addernodes[a])
+                # println("$(a): $(curr_value)")
+                if curr_value > maximum_value
+                    continue
+                end
+                left_input_value = get_input_addernode_values(addernodes[a])[1]
+                right_input_value = get_input_addernode_values(addernodes[a])[2]
+                depth_input_left = get_depth(addernodes[a]) - 1
+                while get(addernodes_value_to_index, (left_input_value, depth_input_left), -1) == -1
+                    depth_input_left -= 1
+                    if depth_input_left == -1
+                        break
+                    end
+                end
+                depth_input_right = get_depth(addernodes[a]) - 1
+                while get(addernodes_value_to_index, (right_input_value, depth_input_right), -1) == -1
+                    depth_input_right -= 1
+                    if depth_input_right == -1
+                        break
+                    end
+                end
+                # println("Left and right input found")
+                left_input = addernodes_value_to_index[left_input_value, depth_input_left]
+                right_input = addernodes_value_to_index[right_input_value, depth_input_right]
+                # left_input_value = 1
+                # if left_input != 0
+                #     left_input_value = get_value(addernodes[left_input])
+                # end
+                # right_input_value = 1
+                # if right_input != 0
+                #     right_input_value = get_value(addernodes[right_input])
+                # end
+                left_shift, right_shift = get_input_shifts(addernodes[a])
+                left_negative, right_negative = are_negative_inputs(addernodes[a])
+                fix(ca[a], curr_value, force=true)
+                fix(ca_no_shift[a], curr_value*(2^max(-right_shift, 0)), force=true)
+                fix(force_odd[a], div(curr_value, 2), force=true)
+                if left_input_value <= maximum_value-1 && right_input_value <= maximum_value-1
+                    fix(cai[a, 1], left_input_value, force=true)
+                    fix(cai[a, 2], right_input_value, force=true)
+                    fix(cai_left_sh[a], left_input_value*(2^max(0, left_shift)), force=true)
+                    if left_negative
+                        fix(cai_left_shsg[a], -left_input_value*(2^max(0, left_shift)), force=true)
+                    else
+                        fix(cai_left_shsg[a], left_input_value*(2^max(0, left_shift)), force=true)
+                    end
+                    if right_negative
+                        fix(cai_right_sg[a], -right_input_value, force=true)
+                    else
+                        fix(cai_right_sg[a], right_input_value, force=true)
+                    end
+                    for k in 0:(a-1)
+                        fix(caik[a, 1, k], 0, force=true)
+                        fix(caik[a, 2, k], 0, force=true)
+                    end
+                    fix(caik[a, 1, left_input], 1, force=true)
+                    fix(caik[a, 2, right_input], 1, force=true)
+                    fix(Phiai[a, 1], left_negative, force=true)
+                    fix(Phiai[a, 2], right_negative, force=true)
+                    fix.(Psias[a, :], 0, force=true)
+                    fix.(phias[a, :], 0, force=true)
+                    if right_shift >= Smin && right_shift <= 0
+                        fix(Psias[a, right_shift], 1, force=true)
+                    end
+                    if left_shift >= 0 && left_shift <= Smax
+                        fix(phias[a, left_shift], 1, force=true)
+                    elseif left_shift < 0
+                        fix(phias[a, 0], 1, force=true)
+                    end
+                    if minimize_adder_depth || adder_depth_max != 0
+                        fix(ada[a], get_depth(addernodes[a]), force=true)
+                        current_adder_depth_max_value = max(current_adder_depth_max_value, get_depth(addernodes[a]))
+                    end
+                end
+                fix.(oaj[a, :], 0, force=true)
+                if (curr_value in C) && (a == nb_var_warmstart || !(curr_value in get_value.(addernodes[(a+1):nb_var_warmstart])))
+                    fix(oaj[a, findfirst(isequal(curr_value), C)], 1, force=true)
+                    # println("Is used as output")
+                end
+            end
+            if minimize_adder_depth || adder_depth_max != 0
+                fix(max_ad, current_adder_depth_max_value, force=true)
+            end
+
+            if known_min_NA < NA
+                for a in (nb_var_warmstart+1):NA
+                    fix(used_adder[a], 0, force=true)
+                    # fix(ca[a], 1, force=true)
+                end
+                for a in (known_min_NA+1):nb_var_warmstart
+                    fix(used_adder[a], 1, force=true)
+                end
+            end
+
+            optimize!(model)
+
+            all_variable_names = sort!(name.(all_variables(model)))
+            ws_values = Dict{String, Float64}()
+            for varname in all_variable_names
+                var_curr = variable_by_name(model, varname)
+                var_val = value(var_curr)
+                if is_integer(var_curr) || is_binary(var_curr)
+                    var_val = round(var_val)
+                end
+                ws_values[varname] = var_val
+            end
+            empty!(model)
+
+            return model_mcm_forumlation!(
+                model, C, wordlength, NA;
+                use_all_adders=use_all_adders,
+                adder_depth_max=adder_depth_max,
+                minimize_adder_depth=minimize_adder_depth,
+                minimize_one_bit_depth=minimize_one_bit_depth,
+                minimize_adder_cost=minimize_adder_cost,
+                minimize_critical_path=minimize_critical_path,
+                wordlength_in=wordlength_in,
+                no_one_bit_adders=no_one_bit_adders,
+                input_error=input_error,
+                output_errors=output_errors,
+                verbose=verbose,
+                known_min_NA=known_min_NA,
+                with_pipelining_cost=with_pipelining_cost,
+                adder_cost=adder_cost,
+                register_cost=register_cost,
+                max_dsp=max_dsp,
+                one_is_output=one_is_output,
+                addergraph_warmstart=addergraph_warmstart,
+                use_big_m=use_big_m,
+                no_right_shifts=no_right_shifts,
+                ws_values=ws_values,
+                kwargs...
+            )
+        else
+            all_variable_names = sort!(name.(all_variables(model)))
+            for varname in all_variable_names
+                set_start_value(variable_by_name(model, varname), ws_values[varname])
+            end
+        end
+    end
+
     verbose && println("Model generated")
 
     return model
@@ -587,11 +642,16 @@ function optimize_increment!(model::Model,
                              use_mcm_warmstart_time_limit_sec::Float64=0.0,
                              addergraph_warmstart::AdderGraph=AdderGraph(),
                              with_pipelining_cost::Bool=false, increase_NA::Int=2,
+                             one_is_output::Bool=false,
                              # write_model::String="",
                              kwargs...
     )::Model
+    Cplusone = copy(C)
+    if one_is_output
+        pushfirst!(Cplusone, 1)
+    end
     if use_warmstart && isempty(addergraph_warmstart)
-        addergraph_warmstart = rpag(C)
+        addergraph_warmstart = rpag(Cplusone, with_register_cost=with_pipelining_cost)
         verbose && println("Warmstart adder graph rpag: $(write_addergraph(addergraph_warmstart))")
     end
     known_min_NA = get_min_number_of_adders(C)
@@ -605,11 +665,12 @@ function optimize_increment!(model::Model,
             use_mcm_warmstart_time_limit_sec = 30.0
         end
         set_time_limit_sec(model, use_mcm_warmstart_time_limit_sec)
-        addergraph_warmstart = mcm(model, C; nb_adders_start=nb_adders_start, use_mcm_warmstart=false, addergraph_warmstart=addergraph_warmstart, verbose=verbose,
+        addergraph_warmstart = mcm(model, Cplusone;
             kwargs...,
+            nb_adders_start=nb_adders_start, use_mcm_warmstart=false, addergraph_warmstart=addergraph_warmstart, verbose=verbose, 
             with_pipelining_cost=with_pipelining_cost, wordlength_in=0,
             minimize_adder_depth=false, minimize_adder_cost=false, minimize_critical_path=false, minimize_one_bit_depth=false,
-            input_error=0, output_error=0, output_errors_dict=Dict{Int, Int}(), output_errors=Vector{Int}()
+            input_error=0, output_error=0, output_errors_dict=Dict{Int, Int}(), output_errors=Vector{Int}(),
         )
         NA = length(get_nodes(addergraph_warmstart))
         if termination_status(model) == MOI.OPTIMAL
@@ -631,7 +692,7 @@ function optimize_increment!(model::Model,
             end
         end
         empty!(model)
-        model_mcm_forumlation!(model, C, wordlength, NA; addergraph_warmstart=addergraph_warmstart, verbose=verbose, known_min_NA=known_min_NA, with_pipelining_cost=with_pipelining_cost, kwargs...)
+        model_mcm_forumlation!(model, C, wordlength, NA; addergraph_warmstart=addergraph_warmstart, one_is_output=one_is_output, verbose=verbose, known_min_NA=known_min_NA, with_pipelining_cost=with_pipelining_cost, kwargs...)
         if !isnothing(timelimit)
             set_time_limit_sec(model, timelimit)
         end

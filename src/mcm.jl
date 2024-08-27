@@ -4,6 +4,7 @@ function mcm(model::Model,
              output_errors_dict::Dict{Int, Int}=Dict{Int, Int}(),
              output_errors::Vector{Int}=Vector{Int}(),
              output_error::Int=0,
+             with_pipelining_cost::Bool=false,
              no_right_shifts::Bool=false,
              verbose::Bool = false,
              kwargs...
@@ -48,7 +49,8 @@ function mcm(model::Model,
     optimize_increment!(model, oddabsC, wordlength,
         output_errors=output_errors,
         verbose=verbose, one_is_output=one_is_output,
-        no_right_shifts=no_right_shifts; kwargs...)
+        no_right_shifts=no_right_shifts,
+        with_pipelining_cost=with_pipelining_cost; kwargs...)
 
     model[:numerical_instability] = false
     current_result = 1
@@ -57,7 +59,12 @@ function mcm(model::Model,
     max_output_error = maximum(output_errors)
     while not_valid && has_values(model; result=current_result)
         addergraph = AdderGraph(C)
+        # println("Current solution: $(model[:NA][current_result])")
+        # println("Current ca $(round(Int, value(model[:ca][0]; result = current_result)))")
+        # println("Current nb_registers $(round(Int, value(model[:nb_registers][0]; result = current_result)))")
         for i in 1:model[:NA][current_result]
+            # println("Current ca $(round(Int, value(model[:ca][i]; result = current_result)))")
+            # println("Current nb_registers $(round(Int, value(model[:nb_registers][i]; result = current_result)))")
             node_shift = 0
             if !no_right_shifts
                 for s in -wordlength:0
@@ -93,7 +100,7 @@ function mcm(model::Model,
                 right_addernode = get_addernodes_by_value(addergraph, round(Int, value(model[:cai][i,2]; result = current_result)))[end]
                 right_inputedge = InputEdge(right_addernode, node_shift, subtraction[2], truncateright)
             end
-            if !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:ca][i]; result = current_result))))
+            if !with_pipelining_cost && !isempty(get_addernodes_by_value(addergraph, round(Int, value(model[:ca][i]; result = current_result))))
                 if max(get_depth(left_addernode), get_depth(right_addernode))+1 <= maximum(get_depth.(get_addernodes_by_value(addergraph, round(Int, value(model[:ca][i]; result = current_result)))))+1
                     continue
                 end
@@ -113,6 +120,12 @@ function mcm(model::Model,
                 )
             end
         end
+        # for i in (model[:NA][current_result]+1):(length(model[:nb_registers])-1)
+        #     println("More nb_registers $(round(Int, value(model[:nb_registers][i]; result = current_result)))")
+        # end
+        # println(length(get_nodes(addergraph)))
+        # println(get_value.(get_nodes(addergraph)))
+        # println("Solution: $(write_addergraph(addergraph))")
         not_valid = !isvalid(addergraph)
         if not_valid
             addergraph = AdderGraph()
@@ -124,7 +137,7 @@ function mcm(model::Model,
     if not_valid
         @warn "Could not provide a valid adder graph, return a greedy or heuristic solution"
         model[:numerical_instability] = true
-        addergraph = rpag(C)
+        addergraph = rpag(C, with_register_cost=with_pipelining_cost)
     end
 
     return addergraph
@@ -139,6 +152,7 @@ function mcm(model::Model,
              output_errors::Vector{Int}=Vector{Int}(),
              output_error::Int=0,
              no_right_shifts::Bool=false,
+             with_pipelining_cost::Bool=false,
              verbose::Bool = false,
              kwargs...
     )
@@ -182,7 +196,8 @@ function mcm(model::Model,
     optimize_increment!(model, oddabsC, wordlength,
         output_errors=output_errors,
         verbose=verbose, one_is_output=one_is_output,
-        no_right_shifts=no_right_shifts; kwargs...)
+        no_right_shifts=no_right_shifts,
+        with_pipelining_cost=with_pipelining_cost; kwargs...)
 
     model[:numerical_instability] = false
     current_result = 1
@@ -247,7 +262,7 @@ function mcm(model::Model,
     if not_valid
         @warn "Could not provide a valid adder graph, return a greedy or heuristic solution"
         model[:numerical_instability] = true
-        addergraph = rpag(first.(C))
+        addergraph = rpag(first.(C), with_register_cost=with_pipelining_cost)
     end
 
     return addergraph
