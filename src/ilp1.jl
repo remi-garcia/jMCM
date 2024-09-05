@@ -95,7 +95,9 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     verbose && with_pipelining_cost && println("adder cost: $adder_cost -- register cost: $register_cost")
 
     @variable(model, 1 <= ca[0:NA] <= maximum_value-1, Int)
-    @constraint(model, [a in 1:known_min_NA], ca[a] >= 3)
+    if !with_pipelining_cost
+        @constraint(model, [a in 1:known_min_NA], ca[a] >= 3)
+    end
     @variable(model, 1 <= ca_no_shift[1:NA] <= maximum_value*2, Int)
     @variable(model, 1 <= cai[1:NA, 1:2] <= maximum_value-1, Int)
     @variable(model, 1 <= cai_left_sh[1:NA] <= maximum_value*2, Int)
@@ -619,6 +621,8 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
         end
     end
 
+    model[:count_used_adder] = (known_min_NA < NA)
+
     verbose && println("Model generated")
 
     return model
@@ -647,7 +651,7 @@ function optimize_increment!(model::Model,
                              kwargs...
     )::Model
     Cplusone = copy(C)
-    if one_is_output
+    if one_is_output && with_pipelining_cost
         pushfirst!(Cplusone, 1)
     end
     if use_warmstart && isempty(addergraph_warmstart)
@@ -692,7 +696,7 @@ function optimize_increment!(model::Model,
             end
         end
         empty!(model)
-        model_mcm_forumlation!(model, C, wordlength, NA; addergraph_warmstart=addergraph_warmstart, one_is_output=one_is_output, verbose=verbose, known_min_NA=known_min_NA, with_pipelining_cost=with_pipelining_cost, kwargs...)
+        model_mcm_forumlation!(model, Cplusone, wordlength, NA; addergraph_warmstart=addergraph_warmstart, one_is_output=one_is_output, verbose=verbose, known_min_NA=known_min_NA, with_pipelining_cost=with_pipelining_cost, kwargs...)
         if !isnothing(timelimit)
             set_time_limit_sec(model, timelimit)
         end
@@ -709,7 +713,12 @@ function optimize_increment!(model::Model,
     count_solution = 0
     while has_values(model; result=count_solution+1)
         count_solution += 1
-        push!(model[:NA], sum(round(value(model[:ca][a]; result=count_solution)) != 1 ? 1 : 0 for a in 1:NA))
+        # push!(model[:NA], sum(round(value(model[:ca][a]; result=count_solution)) != 1 ? 1 : 0 for a in 1:NA))
+        if model[:count_used_adder]
+            push!(model[:NA], NA - sum(1-round(value(model[:used_adder][a]; result=count_solution)) for a in (NA-length(model[:used_adder])+1):NA))
+        else
+            push!(model[:NA], NA)
+        end
     end
     if !isempty(model[:NA])
         NA = model[:NA][1]
