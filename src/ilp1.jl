@@ -107,7 +107,7 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     @variable(model, Phiai[1:NA, 1:2], Bin)
     @variable(model, caik[a in 1:NA, 1:2, 0:(a-1)], Bin)
     @variable(model, phias[1:NA, 0:Smax], Bin)
-    @variable(model, oaj[1:NA, 1:NO], Bin)
+    @variable(model, oaj[(!one_is_output):NA, 1:NO], Bin)
 
     model[:has_ada] = false
     if minimize_adder_depth || adder_depth_max != 0 || with_pipelining_cost
@@ -151,14 +151,14 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
     @constraint(model, [a in 1:NA], Phiai[a,1] + Phiai[a,2] <= 1)
     # C6a - C6b
     if max_dsp == 0
-        @constraint(model, [a in 1:NA, j in 1:NO], ca[a] <= C[j] + (1-oaj[a,j])*maximum_value)
-        @constraint(model, [a in 1:NA, j in 1:NO], ca[a] >= C[j] - (1-oaj[a,j])*maximum_target)
-        @constraint(model, [j in 1:NO], sum(oaj[a,j] for a in 1:NA) == 1)
+        @constraint(model, [a in 0:NA, j in 1:NO], ca[a] <= C[j] + (1-oaj[a,j])*maximum_value)
+        @constraint(model, [a in 0:NA, j in 1:NO], ca[a] >= C[j] - (1-oaj[a,j])*maximum_target)
+        @constraint(model, [j in 1:NO], sum(oaj[a,j] for a in 0:NA) == 1)
     else
         @variable(model, use_dsp[1:NO], Bin)
-        @constraint(model, [a in 1:NA, j in 1:NO], ca[a] <= C[j] + (1-oaj[a,j])*maximum_value + (1-use_dspj[j])*maximum_value)
-        @constraint(model, [a in 1:NA, j in 1:NO], ca[a] >= C[j] - (1-oaj[a,j])*maximum_target - (1-use_dspj[j])*maximum_target)
-        @constraint(model, [j in 1:NO], sum(oaj[a,j] for a in 1:NA)+use_dspj[j] == 1)
+        @constraint(model, [a in 0:NA, j in 1:NO], ca[a] <= C[j] + (1-oaj[a,j])*maximum_value + (1-use_dspj[j])*maximum_value)
+        @constraint(model, [a in 0:NA, j in 1:NO], ca[a] >= C[j] - (1-oaj[a,j])*maximum_target - (1-use_dspj[j])*maximum_target)
+        @constraint(model, [j in 1:NO], sum(oaj[a,j] for a in 0:NA)+use_dspj[j] == 1)
         @constraint(model, sum(use_dspj) <= max_dsp)
     end
 
@@ -388,7 +388,7 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
         @constraint(model, ca[end] <= sum(C[j]*oaj[end,j] for j in 1:NO) + (1-used_adder[end])*maximum_value)
     end
     # At least x adders should be equal to an output at adder n
-    @constraint(model, [n in 1:NA], sum(oaj[a,j] for a in 1:n, j in 1:NO) >= NO - (NA-n))
+    @constraint(model, [n in 1:NA], sum(oaj[a,j] for a in 0:n, j in 1:NO) >= NO - (NA-n))
     # Adders are outputs or used for following ones or not used
     @constraint(model, [a in 1:(known_min_NA-1)], sum(oaj[a,j] for j in 1:NO) +
         sum(caik[var_adder,i,a] for var_adder in (a+1):NA, i in 1:2) >= 1)
@@ -422,8 +422,8 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
             @constraint(model, [a in 0:(NA-1), i in 1:2, ad in 1:NA, k in (a+1):NA], NA*ca_used_at_ad[a, ad] >= ada[k]-ad+1 - (1-caik[k,i,a])*NA)
         end
         @variable(model, used_as_output[0:NA], Bin)
-        @constraint(model, used_as_output[0] == one_is_output)
-        @constraint(model, [a in 1:NA], NA*used_as_output[a] >= sum(oaj[a,j] for j in 1:NO))
+        # @constraint(model, used_as_output[0] == one_is_output)
+        @constraint(model, [a in 0:NA], NA*used_as_output[a] >= sum(oaj[a,j] for j in 1:NO))
         @variable(model, 0 <= max_ad_diff[0:NA] <= NA+1, Int) # diff between ad of c_a and max_ad_used
         @constraint(model, [a in 0:NA, ad in 1:NA], max_ad_diff[a] >= max_ad+1 - ada[a] - (1-used_as_output[a])*NA)
         @constraint(model, [a in 0:(NA-1), ad in 1:NA], max_ad_diff[a] >= ca_used_at_ad[a, ad]*ad - ada[a])
