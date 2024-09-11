@@ -38,6 +38,9 @@ function rpag(C::Vector{Int}; kwargs...)
     addergraph = read_addergraph(addergraph_str)
     ag_outputs = get_outputs(addergraph)
     for c in C
+        if c == 1
+            push_output!(addergraph, 1)
+        end
         if !(c in ag_outputs)
             @warn "rpag did not produce output value $(c)"
         end
