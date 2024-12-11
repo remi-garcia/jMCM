@@ -1,9 +1,7 @@
 using Statistics
 using AdderGraphs
 
-function generate_vhdl_all()
-    nb_files_per_folder = 10
-    wordlength_in = 8
+function generate_vhdl_all(wordlength_in::Int = 8; nb_files_per_folder::Int = 10)
     all_ag_files = readdir("$(@__DIR__)/addergraphs")
     nb_folders = round(Int, length(all_ag_files)/nb_files_per_folder, RoundUp)
     for i in 1:nb_folders

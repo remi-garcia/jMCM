@@ -24,7 +24,7 @@ end
 
 
 function rpag(C::Vector{Int}; kwargs...)
-    if isempty(Libc.find_library("librpag"))
+    if isempty(Libc.Libdl.find_library("librpag"))
         @warn "librpag not found"
         return AdderGraph()
     end

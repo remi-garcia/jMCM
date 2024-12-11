@@ -10,6 +10,8 @@ function mcm(model::Model,
              kwargs...
     )
     model[:numerical_instability] = false
+    model[:total_solve_time] = 0.0
+    model[:valid_objective_value] = 0
     if isempty(C)
         return AdderGraph()
     end
@@ -55,7 +57,6 @@ function mcm(model::Model,
     model[:numerical_instability] = false
     current_result = 1
     not_valid = true
-    model[:valid_objective_value] = 0
     max_output_error = maximum(output_errors)
     while not_valid && has_values(model; result=current_result)
         addergraph = AdderGraph(C)
