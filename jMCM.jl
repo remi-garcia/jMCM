@@ -18,11 +18,10 @@ mutable struct jMCM_args
     threads::Int
     ws_timelimit::Float64
     file_ag::String
-    file_vhdl::String
 end
 
 function jMCM_args()
-    return jMCM_args(Vector{Int}(), nothing, 0, 0, false, false, false, 0, false, false, 0, 0, "addergraph.txt", "addergraph.vhdl")
+    return jMCM_args(Vector{Int}(), nothing, 0, 0, false, false, false, 0, false, false, 0, 0, "addergraph.txt")
 end
 
 function read_args(args)
