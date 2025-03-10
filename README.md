@@ -1,8 +1,6 @@
 # jMCM
 Tool to generate and solve MILP models used to obtain minimal cost adder graphs for Multiple Constant Multiplication (MCM) problems.
 
-Require AdderGraphs v0.1.0:
-
 ## Features
 
 - **Adder Depth Constraints**: Constraint on the maximal adder depth.
