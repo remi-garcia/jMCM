@@ -48,3 +48,6 @@ benchmarks_lutsdsp/*vhdl*
 benchmarks_lutsdsp/*tex
 benchmarks_lutsdsp/*test
 *_save
+resnet20
+cnn
+benchmarks1
