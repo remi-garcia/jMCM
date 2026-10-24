@@ -9,7 +9,7 @@ include("$(@__DIR__())/utils.jl")
 #include("$(@__DIR__())/read_write.jl")
 
 
-function benchmarks(which_benchmark::Int, which_mcm::String, mincrit::Bool=false, use_dsp::Bool=false, with_pipelining_cost::Bool=false)
+function benchmarks(which_benchmark::Int, which_mcm::String, mincrit::Bool=false, use_dsp::Bool=false, with_pipelining_cost::Bool=false, with_optimal_part::Bool=false)
     wordlength_data = 8
     wordlength_in = 0
     output_error_init = output_error = 0
@@ -112,7 +112,7 @@ function benchmarks(which_benchmark::Int, which_mcm::String, mincrit::Bool=false
         set_optimizer_attributes(model, "PoolSolutions" => 100)
         #set_silent(model)
         set_time_limit_sec(model, 1800)
-        @time ag = mcm(model, oddabsC, use_mcm_warmstart=true, with_pipelining_cost=with_pipelining_cost, adder_cost=Int(!with_pipelining_cost), use_mcm_warmstart_time_limit_sec=30.0, wordlength_in=wordlength_in, output_errors_dict=output_errors, verbose=true, minimize_critical_path=mincrit, nb_adders_start=get_max_number_of_adders(oddabsC), use_warmstart=true)
+        @time ag = mcm(model, oddabsC, use_mcm_warmstart=true, with_pipelining_cost=with_pipelining_cost, adder_cost=Int(!with_pipelining_cost), use_mcm_warmstart_time_limit_sec=30.0, wordlength_in=wordlength_in, output_errors_dict=output_errors, verbose=true, minimize_critical_path=mincrit, nb_adders_start=get_max_number_of_adders(oddabsC), use_warmstart=true, use_optimal_part=with_optimal_part)
         println("Solving time: $(model[:total_solve_time])")
 
         not_opt = ""
@@ -150,7 +150,7 @@ end
 
 if length(ARGS) > 0
     if length(ARGS) >= 3
-        benchmarks(parse(Int, ARGS[1]), ARGS[2], "cp" in ARGS[3:end], "dsp" in ARGS[3:end], "pipeline" in ARGS[3:end])
+        benchmarks(parse(Int, ARGS[1]), ARGS[2], "cp" in ARGS[3:end], "dsp" in ARGS[3:end], "pipeline" in ARGS[3:end], "optpart" in ARGS[3:end])
     else
         benchmarks(parse(Int, ARGS[1]), ARGS[2])
     end

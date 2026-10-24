@@ -37,6 +37,7 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
                                 addergraph_warmstart::AdderGraph,
                                 use_big_m::Bool=true,
                                 no_right_shifts::Bool=false,
+                                use_optimal_part::Bool=false,
                                 ws_values::Dict{String, Float64}=Dict{String, Float64}(),
                                 kwargs...
     )::Model
@@ -611,12 +612,29 @@ function model_mcm_forumlation!(model::Model, C::Vector{Int},
                 use_big_m=use_big_m,
                 no_right_shifts=no_right_shifts,
                 ws_values=ws_values,
+                use_optimal_part=use_optimal_part,
                 kwargs...
             )
         else
             all_variable_names = sort!(name.(all_variables(model)))
             for varname in all_variable_names
                 set_start_value(variable_by_name(model, varname), ws_values[varname])
+            end
+            verbose && println("Before optimal part")
+            if use_optimal_part
+                verbose && print("Fixing optimal part:")
+                curr_adder = 1
+                curr_start = round(Int, start_value(ca[curr_adder]))
+                while curr_start in C
+                    verbose && print(" $(curr_start)")
+                    fix(ca[curr_adder], curr_start, force=true)
+                    curr_adder += 1
+                    if curr_adder > NA
+                        break
+                    end
+                    curr_start = round(Int, start_value(ca[curr_adder]))
+                end
+                verbose && println()
             end
         end
     end
